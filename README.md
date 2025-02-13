@@ -57,25 +57,35 @@ git clone https://github.com/toratommy/semantic-deduplication
 cd semantic-deduplication
 ```
 
-2. **Install dependencies**:
-```bash
-pip install -r requirements.txt
-```
-   Ensure you have **Python 3.8+**.
+### 2. Set Up a Conda Environment (Recommended)
 
-3. **Adjust `config.yml`**:
+1. **Create** a new conda environment (e.g. “fuzzy-dedup”) with Python 3.12:
+   ```bash
+   conda create -n fuzzy-dedup python=3.12
+   ```
+2. **Activate** the environment:
+   ```bash
+   conda activate fuzzy-dedup
+   ```
+3. **Install** dependencies using `pip` within the environment:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+> *Note*: If you prefer not to use Conda, you can simply install Python 3.12+ and run `pip install -r requirements.txt` in a regular virtual environment.
+
+### 3. Adjust `config.yml`
 
 ```yaml
-dataset1_path: "dataset1.csv"
-dataset2_path: "dataset2.csv"
+dataset1_path: "data/dataset1.csv"
+dataset2_path: "data/dataset2.csv"
 output_path: "combined_deduplicated.csv"
 
 dataset1_columns:
   - "..."
 
-
 dataset2_to_dataset1:
-  "Region 2": "..."
+  "...": "..."
 
 blocking_keys:
   - "..."
@@ -86,8 +96,8 @@ fuzzy_keys:
 similarity_threshold: 0.85
 ```
 
-- **`dataset1_path`**: Path to Dataset 1 CSV  
-- **`dataset2_path`**: Path to Dataset 2 CSV  
+- **`dataset1_path`**: Path to Dataset 1 CSV (in `data/`)  
+- **`dataset2_path`**: Path to Dataset 2 CSV (in `data/`)  
 - **`output_path`**: Where the merged, deduplicated CSV will be written  
 - **`dataset1_columns`**: Full list of columns in Dataset 1’s schema  
 - **`dataset2_to_dataset1`**: Mapping from Dataset 2 fields to Dataset 1 columns  
@@ -95,15 +105,15 @@ similarity_threshold: 0.85
 - **`fuzzy_keys`**: Columns on which to perform string similarity  
 - **`similarity_threshold`**: Average similarity above which two rows are considered duplicates  
 
-4. **Run the pipeline** in Jupyter Notebook:
+### 4. Run the Pipeline in Jupyter Notebook
 
-   1. Launch Jupyter:
-      ```bash
-      jupyter notebook fuzzy_deduplication.ipynb
-      ```
-   2. Open **`fuzzy_deduplication.ipynb`** in your browser.
-   3. Run cells from top to bottom.  
-   4. The final deduplicated CSV will be saved at the `output_path` you specified in `config.yml`.
+1. Launch Jupyter from your conda environment:
+   ```bash
+   jupyter notebook fuzzy_deduplication.ipynb
+   ```
+2. Open **`fuzzy_deduplication.ipynb`** in your browser.
+3. Run the notebook cells from top to bottom.
+4. The final deduplicated CSV will be saved at the `output_path` you specified in `config.yml`.
 
 ---
 
@@ -118,7 +128,7 @@ similarity_threshold: 0.85
 5. **Fuzzy Matching**: For each candidate pair, we compute textual similarity on `fuzzy_keys` via Jaro-Winkler (default in recordlinkage’s `Compare.string()`).  
 6. **Classification**: We average the similarity across the `fuzzy_keys` for each pair. If >= `similarity_threshold`, the pair is considered duplicates.  
 7. **Merge**: We union-find all duplicates into groups, keeping one record (earliest) per group.  
-8. **Save**: The final DataFrame is written to the `output_path` CSV.
+8. **Save**: The final DataFrame is written to `output_path`.
 
 ---
 
@@ -126,9 +136,8 @@ similarity_threshold: 0.85
 
 - **Column Mappings**: Adjust `dataset2_to_dataset1` in `config.yml` if your Dataset 2 column names differ.  
 - **Blocking**: If you need more or fewer columns for blocking, update `blocking_keys`.  
-- **Fuzzy Method**: 
-  - By default, `Compare.string(..., method='jaro_winkler')` returns a score in `[0,1]`. 
+- **Fuzzy Method**:  
+  - By default, `Compare.string(..., method='jaro_winkler')` returns a score in `[0,1]`.  
   - You can switch to `'levenshtein'`, `'jaro'`, or pass a custom function.  
-- **Merging Logic**: Currently we drop all but the earliest row in each duplicate group. Modify `merge_duplicate_pairs()` in **`fuzzy_helpers.py`** if you’d prefer to sum volumes or combine text fields.  
+- **Merging Logic**: Currently we drop all but the earliest row in each duplicate group. Modify `merge_duplicate_pairs()` in **`src/fuzzy_helpers.py`** if you’d prefer to sum volumes or combine text fields.  
 - **Semantic Dedup**: If your data requires concept-level matching, you can replace or augment fuzzy matching with embeddings or advanced text similarity.
-
