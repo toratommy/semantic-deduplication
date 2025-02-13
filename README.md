@@ -51,7 +51,7 @@ This repository contains a **modular** pipeline for **fuzzy deduplication** of t
 
 ## Getting Started
 
-1. **Clone** or download this repository:
+### 1. **Clone** or download this repository:
 ```bash
 git clone https://github.com/toratommy/semantic-deduplication
 cd semantic-deduplication
