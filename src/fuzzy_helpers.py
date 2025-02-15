@@ -4,14 +4,48 @@ import pandas as pd
 import numpy as np
 import recordlinkage
 from recordlinkage import Index, Compare
-from recordlinkage.compare import String
-from rapidfuzz import fuzz
+from recordlinkage.base import BaseCompareFeature
+from rapidfuzz.distance import JaroWinkler
 from typing import List, Dict, Any
 import yaml
 from collections import defaultdict
 
+##############################################################################
+# Custom Comparator using Rapidfuzz
+##############################################################################
 
-def load_config(config_file: str) -> Dict[str, Any]:
+class RapidfuzzComparator(BaseCompareFeature):
+    """
+    A custom comparator for recordlinkage that uses Rapidfuzz's JaroWinkler
+    similarity in [0,1].
+    """
+
+    def __init__(self, left_on, right_on, label=None):
+        """
+        For older recordlinkage versions, we must call super().__init__ with:
+            super().__init__(left_on, right_on, label)
+        in that order.
+        """
+        super().__init__(left_on, right_on, label)
+
+    def _compute_vectorized(self, s_left: pd.Series, s_right: pd.Series) -> np.ndarray:
+        """
+        s_left, s_right are Series from the left/right columns. We compute 
+        JaroWinkler.similarity(...) for each pair, returning a NumPy array
+        in [0..1].
+        """
+        scores = [
+            JaroWinkler.similarity(str(x), str(y))
+            for x, y in zip(s_left, s_right)
+        ]
+        return np.array(scores)
+
+
+##############################################################################
+# Load / Mapping Functions
+##############################################################################
+
+def load_config(config_file: str) -> dict:
     """
     Load YAML configuration from a file path and return as a dictionary.
     """
@@ -34,7 +68,6 @@ def load_dataset1(path: str, dataset1_columns: List[str]) -> pd.DataFrame:
     
     # Reorder columns
     df = df[dataset1_columns]
-    
     return df
 
 
@@ -61,7 +94,6 @@ def load_dataset2_and_map(path: str, dataset1_columns: List[str], mapping: Dict[
     
     # Reorder columns
     mapped_df = mapped_df[dataset1_columns]
-    
     return mapped_df
 
 
@@ -73,19 +105,29 @@ def combine_dataframes(df1: pd.DataFrame, df2: pd.DataFrame) -> pd.DataFrame:
     return combined
 
 
+##############################################################################
+# Blocking & Fuzzy Comparison
+##############################################################################
+
 def block_data(df: pd.DataFrame, blocking_keys: List[str]) -> pd.MultiIndex:
     """
     Use recordlinkage to identify candidate pairs by blocking on the given columns.
     We do a "self-join" for deduplication within a single dataframe.
     
     Returns:
-        A MultiIndex of candidate (row_i, row_j) pairs.
+        A MultiIndex of candidate (row_i, row_j) pairs, excluding self-matches (i, i).
     """
     indexer = Index()
     for key in blocking_keys:
         indexer.block(left_on=key, right_on=key)
     
     candidate_pairs = indexer.index(df, df)
+    
+    # Remove self-matches (where row i == row j)
+    candidate_pairs = candidate_pairs[
+        candidate_pairs.get_level_values(0) != candidate_pairs.get_level_values(1)
+    ]
+    
     return candidate_pairs
 
 
@@ -95,20 +137,25 @@ def build_comparison_features(
     fuzzy_keys: List[str]
 ) -> pd.DataFrame:
     """
-    For each pair in candidate_pairs, compute fuzzy similarity on the specified columns.
-    By default, recordlinkage.Compare.string() uses jaro_winkler, returning a value in [0, 1].
+    For each pair in candidate_pairs, compute fuzzy similarity on the specified columns
+    using RapidfuzzComparator, which calls rapidfuzz JaroWinkler internally.
     
     Returns:
         A DataFrame (same index as candidate_pairs) of similarity scores.
     """
     compare = Compare()
-    
+    # For older recordlinkage versions, pass the column names positionally:
+    # e.g., compare.add(RapidfuzzComparator("Opportunity Name", "Opportunity Name", label="Opportunity Name"))
     for col in fuzzy_keys:
-        compare.string(col, col, method='jaro_winkler', label=col, threshold=0.0)
+        compare.add(RapidfuzzComparator(col, col, label=col))
     
     features = compare.compute(candidate_pairs, df, df)
     return features
 
+
+##############################################################################
+# Classification & Merging
+##############################################################################
 
 def classify_duplicates(features_df: pd.DataFrame, threshold: float) -> pd.MultiIndex:
     """
@@ -134,9 +181,8 @@ def merge_duplicate_pairs(df: pd.DataFrame, duplicates_idx: pd.MultiIndex) -> pd
     adjacency = defaultdict(set)
     
     for (i, j) in duplicates_idx:
-        if i != j:
-            adjacency[i].add(j)
-            adjacency[j].add(i)
+        adjacency[i].add(j)
+        adjacency[j].add(i)
     
     visited = set()
     groups = []
@@ -151,7 +197,7 @@ def merge_duplicate_pairs(df: pd.DataFrame, duplicates_idx: pd.MultiIndex) -> pd
                     group.add(neigh)
                     stack.append(neigh)
     
-    # Build connected components
+    # Build connected components of duplicates
     for i in adjacency.keys():
         if i not in visited:
             visited.add(i)
@@ -159,7 +205,7 @@ def merge_duplicate_pairs(df: pd.DataFrame, duplicates_idx: pd.MultiIndex) -> pd
             dfs(i, g)
             groups.append(g)
     
-    # For each group, keep the earliest row, drop the others
+    # For each group, keep the earliest row, drop the rest
     to_drop = []
     for g in groups:
         sorted_list = sorted(g)
