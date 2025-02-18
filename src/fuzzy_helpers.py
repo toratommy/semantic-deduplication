@@ -218,28 +218,32 @@ def merge_duplicate_pairs(df: pd.DataFrame, duplicates_idx: pd.MultiIndex) -> pd
 
 def keep_dataset1_and_unmatched_dataset2(df: pd.DataFrame, duplicates_idx: pd.MultiIndex) -> pd.DataFrame:
     """
-    We have a MultiIndex of (i, j) duplicates under fuzzy logic.
-    'df' has a column 'source' = 1 or 2 indicating Dataset1 or Dataset2.
-    
-    For each connected component of duplicates:
-      - If the component includes any row from Dataset1, keep all those Dataset1 rows, 
-        and discard any Dataset2 rows in that component.
-      - If the component is purely Dataset2 (no Dataset1 rows), we keep them all (i.e. 
-        if you do not want to deduplicate among Dataset2). Or keep earliest if you prefer.
-    
-    Returns a new DataFrame with the final set of rows.
+    We have:
+      - df: combined DataFrame with a column 'source' = 1 for Dataset1, = 2 for Dataset2
+      - duplicates_idx: MultiIndex of (i, j) pairs considered duplicates from fuzzy matching
+
+    For each connected component in the adjacency:
+      - If any row is from Dataset1 (source == 1), we keep those Dataset1 rows,
+        discard the Dataset2 rows in that group.
+      - If the entire group is only Dataset2, we keep them all 
+        (since none matched Dataset1).
+
+    Also, any row not in 'duplicates_idx' at all (meaning no edges) is placed
+    in a single-row group, and we apply the same rule:
+      - If it’s a Dataset1 row, keep it
+      - If it’s Dataset2, keep it too (since it didn’t match any DS1 row).
     """
     from collections import defaultdict
-
-    # Build adjacency from duplicates_idx
+    
+    # 1) Build adjacency
     adjacency = defaultdict(set)
     for (i, j) in duplicates_idx:
         adjacency[i].add(j)
         adjacency[j].add(i)
-
+    
     visited = set()
     groups = []
-
+    
     def dfs(node, group_set):
         stack = [node]
         while stack:
@@ -249,41 +253,33 @@ def keep_dataset1_and_unmatched_dataset2(df: pd.DataFrame, duplicates_idx: pd.Mu
                     visited.add(neigh)
                     group_set.add(neigh)
                     stack.append(neigh)
-
-    # Build connected components
-    for i in range(len(df)):
-        if i not in visited and i in adjacency:
-            visited.add(i)
-            g = {i}
-            dfs(i, g)
-            groups.append(g)
-        elif i not in visited and i not in adjacency:
-            # It's an isolated row not in duplicates_idx at all
-            groups.append({i})
-            visited.add(i)
-
-    # We will build a list of row indices to keep
+    
+    # 2) Create connected components
+    #    Include "isolated" rows (no adjacency) as single-row groups
+    for row_idx in range(len(df)):
+        if row_idx not in visited:
+            visited.add(row_idx)
+            group = {row_idx}
+            # If row_idx is in adjacency, gather all connected
+            if row_idx in adjacency:
+                dfs(row_idx, group)
+            groups.append(group)
+    
+    # 3) Decide which rows to keep
     keep_indices = set()
-
     for group in groups:
-        # Check if group has any Dataset1 row
-        has_ds1 = any((df.loc[idx, "source"] == 1) for idx in group)
-
+        # Check if group has any DS1 row
+        has_ds1 = any(df.loc[idx, "source"] == 1 for idx in group)
         if has_ds1:
-            # Keep all dataset1 rows from this group, discard dataset2
+            # Keep only Dataset1 rows from that group, discard DS2
             for idx in group:
                 if df.loc[idx, "source"] == 1:
                     keep_indices.add(idx)
         else:
-            # This group is purely dataset2 rows (no dataset1)
-            # We can keep them all or do partial dedup. 
-            # Example: keep them all:
+            # Group is purely DS2 or no DS1 present => keep them all
             for idx in group:
                 keep_indices.add(idx)
-            # Alternatively, keep only the earliest:
-            # earliest = min(group)
-            # keep_indices.add(earliest)
-
-    # Now build final DataFrame from 'keep_indices'
+    
+    # 4) Build final DataFrame
     df_merged = df.loc[sorted(keep_indices)].reset_index(drop=True)
     return df_merged
